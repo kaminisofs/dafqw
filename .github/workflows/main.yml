@@ -41,10 +41,31 @@ jobs:
     - name: Start Cloudflare Tunnel
       id: tunnel
       run: |
+        # cloudflaredをバックグラウンドで起動し、ログをファイルに保存
         cloudflared tunnel --url http://localhost:6080 > tunnel.log 2>&1 &
-        sleep 15
-        URL=$(grep -o 'https://[^ ]*' tunnel.log | head -1)
+        CLOUDFLARED_PID=$!
+        
+        # トンネルが起動するのを待つ
+        echo "Waiting for Cloudflare Tunnel to start..."
+        for i in {1..30}; do
+          if grep -q "trycloudflare.com" tunnel.log; then
+            echo "Cloudflare Tunnel is ready!"
+            break
+          fi
+          echo "Waiting... ($i/30)"
+          sleep 2
+        done
+        
+        # トンネルURLを抽出
+        URL=$(grep -o 'https://[^ ]*\.trycloudflare\.com' tunnel.log | head -1)
+        if [ -z "$URL" ]; then
+          echo "Failed to get tunnel URL. Log content:"
+          cat tunnel.log
+          exit 1
+        fi
+        
         echo "tunnel_url=$URL" >> $GITHUB_OUTPUT
+        echo "Cloudflare Tunnel PID: $CLOUDFLARED_PID" >> $GITHUB_OUTPUT
         
     - name: Display connection info
       run: |
@@ -55,6 +76,8 @@ jobs:
         echo "Password: password"
         echo "================================"
         echo "Waiting for connection..."
+        echo "Full tunnel log:"
+        cat tunnel.log
         
     - name: Keep alive
       run: |
