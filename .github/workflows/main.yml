@@ -1,4 +1,4 @@
-name: VNC with Latest Cloudflared
+name: VNC Server with Cloudflare Tunnel
 on: [workflow_dispatch]
 jobs:
   vnc:
@@ -33,13 +33,16 @@ jobs:
       run: |
         websockify --web=noVNC 6080 localhost:5901 &
         
-    - name: Download latest cloudflared
+    - name: Download cloudflared
       run: |
-        # 最新バージョンを直接ダウンロード
+        # バージョンを指定してダウンロード
         curl -L https://github.com/cloudflare/cloudflared/releases/download/2024.8.1/cloudflared-linux-amd64.deb -o cloudflared.deb
-        sudo dpkg -i cloudflared.deb
+        # ダウンロードを確認
+        ls -la cloudflared.deb
+        # インストール
+        sudo dpkg -i cloudflared.deb || sudo apt-get install -f -y
         
-    - name: Start Cloudflare Tunnel with output capture
+    - name: Start Cloudflare Tunnel
       id: tunnel
       run: |
         # 一時ファイルにcloudflaredの出力を保存
