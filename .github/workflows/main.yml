@@ -1,95 +1,34 @@
-name: RDP with Cloudflare Quick Tunnel
+name: Setup RDP with Cloudflare Quick Tunnel
 
 on:
-  workflow_dispatch: # 手動実行用
+  workflow_dispatch:
 
 jobs:
-  rdp:
-    runs-on: windows-latest # Windows Runnerを使用
-
+  rdp-setup:
+    runs-on: windows-latest
     steps:
-    - name: Set up RDP
-      id: rdp_setup
-      run: |
-        # RDP有効化
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-        # ファイアウォールでRDPポート（3389）を許可
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        
-        # 既存のrunneradminユーザーのパスワードを変更
-        $username = "runneradmin"
-        $password = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 16 | % {[char]$_})
-        $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
-        Set-LocalUser -Name $username -Password $securePassword
-        
-        # GitHub Actionsの出力に設定
-        echo "username=$username" >> $env:GITHUB_OUTPUT
-        echo "password=$password" >> $env:GITHUB_OUTPUT
-
-    - name: Setup cloudflared
-      uses: AnimMouse/setup-cloudflared@v2
-
-    - name: Start Cloudflare Quick Tunnel (RDP)
-      id: tunnel
-      run: |
-        # 標準出力から直接URLを抽出
-        Write-Host "Starting cloudflared to get tunnel URL..."
-        $output = cmd /c "cloudflared tunnel --url rdp://localhost:3389 2>&1"
-        Write-Host "Cloudflared output:"
-        Write-Host $output
-        
-        # 出力からURLを抽出
-        $url = $null
-        if ($output -match 'https://[a-zA-Z0-9\-]+\.trycloudflare\.com') {
-          $url = $matches[0]
-          echo "tunnel_url=$url" >> $env:GITHUB_OUTPUT
-          Write-Host "Found tunnel URL: $url"
+      - name: Enable RDP and Set Password
+        shell: powershell
+        run: |
+          # RDPを有効化
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           
-          # バックグラウンドでcloudflaredを実行し続ける
-          Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url rdp://localhost:3389" -NoNewWindow
-          Write-Host "Cloudflared started in background"
-        } else {
-          Write-Host "Failed to get tunnel URL"
-          exit 1
-        }
-      shell: pwsh
+          # ユーザー有効化とパスワード設定（任意のパスワードに変更）
+          net user runneradmin /active:yes
+          net user runneradmin P@ssw0rd123!  # ここを強力なパスワードに変更
+          
+          # RDPが有効か確認
+          Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections"
 
-    - name: Verify RDP Service
-      run: |
-        # RDPサービスが実行中であることを確認
-        $service = Get-Service -Name TermService -ErrorAction SilentlyContinue
-        if ($service -and $service.Status -eq 'Running') {
-          Write-Host "RDP service is running"
-        } else {
-          Write-Host "Starting RDP service..."
-          Start-Service -Name TermService
-        }
-        
-        # RDPポートがリッスンしていることを確認
-        $tcpConnections = Get-NetTCPConnection -LocalPort 3389 -ErrorAction SilentlyContinue
-        if ($tcpConnections) {
-          Write-Host "RDP port 3389 is listening"
-        } else {
-          Write-Host "WARNING: RDP port 3389 is not listening"
-        }
-      shell: pwsh
+      - name: Install cloudflared
+        uses: AnimMouse/setup-cloudflared@v1  # GitHub Marketplaceのアクションでインストール（最新版自動取得）
 
-    - name: Wait for RDP Connection
-      run: |
-        # 1時間待機（必要に応じて調整）
-        Write-Host "Waiting for RDP connections for 1 hour..."
-        Start-Sleep -Seconds 3600
-      shell: pwsh
-
-    - name: Output RDP Connection Info
-      run: |
-        echo "==================== RDP Connection Info ===================="
-        echo "RDP Username: ${{ steps.rdp_setup.outputs.username }}"
-        echo "RDP Password: ${{ steps.rdp_setup.outputs.password }}"
-        echo "Cloudflare Tunnel URL: ${{ steps.tunnel.outputs.tunnel_url }}"
-        echo "============================================================"
-        echo ""
-        echo "Connect using the above URL in your RDP client."
-        echo "The connection will be available until this workflow times out (1 hour)."
-        echo ""
-        echo "Note: It may take a few minutes for the tunnel to be fully accessible."
+      - name: Start Cloudflare Quick Tunnel for RDP
+        shell: powershell
+        run: |
+          # Quick Tunnelを起動（アカウント不要、ランダムURL生成）
+          cloudflared tunnel --url rdp://localhost:3389
+          
+          # トンネルが起動するまで待機（URLはログに出力される）
+          Start-Sleep -Seconds 3600  # ジョブを1時間保持（必要に応じて調整、最大6時間）
