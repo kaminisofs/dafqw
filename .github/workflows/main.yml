@@ -1,4 +1,4 @@
-name: VNC Server with Cloudflare Tunnel
+name: VNC with Latest Cloudflared
 on: [workflow_dispatch]
 jobs:
   vnc:
@@ -33,39 +33,51 @@ jobs:
       run: |
         websockify --web=noVNC 6080 localhost:5901 &
         
-    - name: Download cloudflared
+    - name: Download latest cloudflared
       run: |
-        curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+        # 最新バージョンを直接ダウンロード
+        curl -L https://github.com/cloudflare/cloudflared/releases/download/2024.8.1/cloudflared-linux-amd64.deb -o cloudflared.deb
         sudo dpkg -i cloudflared.deb
         
-    - name: Start Cloudflare Tunnel
+    - name: Start Cloudflare Tunnel with output capture
       id: tunnel
       run: |
-        # cloudflaredをバックグラウンドで起動し、ログをファイルに保存
-        cloudflared tunnel --url http://localhost:6080 > tunnel.log 2>&1 &
+        # 一時ファイルにcloudflaredの出力を保存
+        TEMP_FILE=$(mktemp)
+        
+        # バックグラウンドでcloudflaredを実行
+        cloudflared tunnel --url http://localhost:6080 > $TEMP_FILE 2>&1 &
         CLOUDFLARED_PID=$!
         
         # トンネルが起動するのを待つ
-        echo "Waiting for Cloudflare Tunnel to start..."
+        echo "Waiting for tunnel to start..."
         for i in {1..30}; do
-          if grep -q "trycloudflare.com" tunnel.log; then
-            echo "Cloudflare Tunnel is ready!"
+          if grep -q "trycloudflare.com" $TEMP_FILE; then
+            echo "Tunnel started successfully!"
             break
           fi
           echo "Waiting... ($i/30)"
           sleep 2
         done
         
-        # トンネルURLを抽出
-        URL=$(grep -o 'https://[^ ]*\.trycloudflare\.com' tunnel.log | head -1)
+        # ログを表示
+        echo "Tunnel log content:"
+        cat $TEMP_FILE
+        
+        # URLを抽出
+        URL=$(grep -o 'https://[-a-zA-Z0-9\.]*\.trycloudflare\.com' $TEMP_FILE | head -1)
+        
+        # URLが見つからない場合、別の方法で試す
         if [ -z "$URL" ]; then
-          echo "Failed to get tunnel URL. Log content:"
-          cat tunnel.log
-          exit 1
+          echo "Trying alternative method to get URL..."
+          URL=$(grep -oE 'https://[a-z0-9\-]+\.trycloudflare\.com' $TEMP_FILE | head -1)
         fi
         
+        # 一時ファイルをコピー
+        cp $TEMP_FILE tunnel.log
+        
         echo "tunnel_url=$URL" >> $GITHUB_OUTPUT
-        echo "Cloudflare Tunnel PID: $CLOUDFLARED_PID" >> $GITHUB_OUTPUT
+        echo "CLOUDFLARED_PID=$CLOUDFLARED_PID" >> $GITHUB_OUTPUT
         
     - name: Display connection info
       run: |
@@ -75,9 +87,10 @@ jobs:
         echo "URL: ${{ steps.tunnel.outputs.tunnel_url }}"
         echo "Password: password"
         echo "================================"
-        echo "Waiting for connection..."
-        echo "Full tunnel log:"
+        echo "Tunnel log content:"
         cat tunnel.log
+        echo "================================"
+        echo "Waiting for connection..."
         
     - name: Keep alive
       run: |
