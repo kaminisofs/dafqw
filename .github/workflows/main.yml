@@ -2,9 +2,6 @@ name: RDP with Cloudflare Quick Tunnel
 
 on:
   workflow_dispatch: # 手動実行用
-  # push: # 自動実行したい場合はコメントを外す
-  #   branches:
-  #     - main
 
 jobs:
   rdp:
@@ -12,32 +9,70 @@ jobs:
 
     steps:
     - name: Set up RDP
+      id: rdp_setup
       run: |
         # RDP有効化
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
         # ファイアウォールでRDPポート（3389）を許可
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        # ユーザー名とパスワードを設定（runnerユーザー）
-        # ※ パスワードはランダム生成し、ログに出力
-        $username = "runner"
+        
+        # 既存のrunneradminユーザーのパスワードを変更
+        $username = "runneradmin"
         $password = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 16 | % {[char]$_})
-        net user $username $password /add
-        net localgroup administrators $username /add
-        echo "RDP Username: $username" >> $env:GITHUB_OUTPUT
-        echo "RDP Password: $password" >> $env:GITHUB_OUTPUT
+        $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+        Set-LocalUser -Name $username -Password $securePassword
+        
+        # GitHub Actionsの出力に設定
+        echo "username=$username" >> $env:GITHUB_OUTPUT
+        echo "password=$password" >> $env:GITHUB_OUTPUT
 
     - name: Setup cloudflared
       uses: AnimMouse/setup-cloudflared@v2
 
     - name: Start Cloudflare Quick Tunnel (RDP)
+      id: tunnel
       run: |
-        # RDPポート（3389）をQuick Tunnelで公開
-        cloudflared tunnel --url rdp://localhost:3389
-      # バックグラウンドで実行し続けるための工夫
+        # cloudflaredを実行し、出力をファイルに保存
+        $logFile = "$env:TEMP\cloudflared.log"
+        Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url rdp://localhost:3389" -RedirectStandardOutput $logFile -NoNewWindow
+        
+        # URLが出力されるまで待機
+        $url = $null
+        $timeout = 30 # 30秒待つ
+        $elapsed = 0
+        while ($elapsed -lt $timeout -and -not $url) {
+          Start-Sleep -Seconds 1
+          $elapsed++
+          if (Test-Path $logFile) {
+            $content = Get-Content $logFile -Raw
+            if ($content -match 'https://[a-zA-Z0-9\-]+\.trycloudflare\.com') {
+              $url = $matches[0]
+            }
+          }
+        }
+        
+        if ($url) {
+          echo "tunnel_url=$url" >> $env:GITHUB_OUTPUT
+          echo "Cloudflare Tunnel URL: $url"
+        } else {
+          echo "Failed to get tunnel URL"
+          exit 1
+        }
       shell: pwsh
 
     - name: Wait for RDP Connection
       run: |
-        # 一定時間待機（例: 1時間）
+        # 1時間待機（必要に応じて調整）
         Start-Sleep -Seconds 3600
       shell: pwsh
+
+    - name: Output RDP Connection Info
+      run: |
+        echo "==================== RDP Connection Info ===================="
+        echo "RDP Username: ${{ steps.rdp_setup.outputs.username }}"
+        echo "RDP Password: ${{ steps.rdp_setup.outputs.password }}"
+        echo "Cloudflare Tunnel URL: ${{ steps.tunnel.outputs.tunnel_url }}"
+        echo "============================================================"
+        echo ""
+        echo "Connect using the above URL in your RDP client."
+        echo "The connection will be available until this workflow times out (1 hour)."
