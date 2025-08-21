@@ -1,85 +1,31 @@
-name: VNC Server with localhost.run
-on: [workflow_dispatch]
+name: Setup RDP with Cloudflare Quick Tunnel
+
+on: [workflow_dispatch]  # 手動トリガー（Actionsタブから実行）
+
 jobs:
-  vnc:
-    runs-on: ubuntu-latest
+  rdp:
+    runs-on: windows-latest
     steps:
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y tightvncserver xfce4 xfce4-goodies websockify
-        
-    - name: Setup VNC
-      run: |
-        mkdir -p ~/.vnc
-        echo "password" | vncpasswd -f > ~/.vnc/passwd
-        chmod 600 ~/.vnc/passwd
-        cat > ~/.vnc/xstartup << EOF
-        #!/bin/bash
-        unset SESSION_MANAGER
-        unset DBUS_SESSION_BUS_ADDRESS
-        exec startxfce4
-        EOF
-        chmod +x ~/.vnc/xstartup
-        vncserver :1 -geometry 1280x720 -depth 24
-        
-    - name: Download noVNC
-      run: |
-        git clone https://github.com/novnc/noVNC.git
-        cd noVNC
-        git checkout v1.4.0
-        
-    - name: Start websockify
-      run: |
-        websockify --web=noVNC 6080 localhost:5901 &
-        
-    - name: Start tunnel with localhost.run
-      id: tunnel
-      run: |
-        # 一時ファイルにsshの出力を保存
-        TEMP_FILE=$(mktemp)
-        
-        # バックグラウンドでsshを実行
-        ssh -o StrictHostKeyChecking=no -R 80:localhost:6080 localhost.run > $TEMP_FILE 2>&1 &
-        SSH_PID=$!
-        
-        # トンネルが起動するのを待つ
-        echo "Waiting for tunnel to start..."
-        for i in {1..30}; do
-          if grep -q "https://" $TEMP_FILE; then
-            echo "Tunnel started successfully!"
-            break
-          fi
-          echo "Waiting... ($i/30)"
-          sleep 2
-        done
-        
-        # ログを表示
-        echo "Tunnel log content:"
-        cat $TEMP_FILE
-        
-        # URLを抽出
-        URL=$(grep -o 'https://[^ ]*' $TEMP_FILE | head -1)
-        
-        # 一時ファイルをコピー
-        cp $TEMP_FILE tunnel.log
-        
-        echo "tunnel_url=$URL" >> $GITHUB_OUTPUT
-        echo "SSH_PID=$SSH_PID" >> $GITHUB_OUTPUT
-        
-    - name: Display connection info
-      run: |
-        echo "================================"
-        echo "VNC Connection Information"
-        echo "================================"
-        echo "URL: ${{ steps.tunnel.outputs.tunnel_url }}"
-        echo "Password: password"
-        echo "================================"
-        echo "Tunnel log content:"
-        cat tunnel.log
-        echo "================================"
-        echo "Waiting for connection..."
-        
-    - name: Keep alive
-      run: |
-        sleep 3600
+      - name: Enable RDP
+        shell: powershell
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          net user runneradmin StrongPassword123! /add  # パスワードを強固なものに変更
+          net localgroup administrators runneradmin /add
+
+      - name: Setup cloudflared
+        uses: AnimMouse/setup-cloudflared@v2
+
+      - name: Setup Cloudflare Quick Tunnel for RDP
+        uses: AnimMouse/setup-cloudflared/tunnel@v2
+        with:
+          url: tcp://localhost:3389  # RDPポートをTCPで公開
+
+      - name: Keep workflow running for connection
+        shell: powershell
+        run: Start-Sleep -Seconds 30000  # 5分間待機（接続時間を調整）
+
+      - name: Shutdown cloudflared
+        if: '!cancelled()'
+        uses: AnimMouse/setup-cloudflared/shutdown@v2
