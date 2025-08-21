@@ -1,4 +1,4 @@
-name: VNC Server with Websockify
+name: VNC Server with Cloudflare Tunnel
 on: [workflow_dispatch]
 jobs:
   vnc:
@@ -29,19 +29,32 @@ jobs:
         cd noVNC
         git checkout v1.4.0
         
-    - name: Start websockify manually
+    - name: Start websockify
       run: |
         websockify --web=noVNC 6080 localhost:5901 &
         
-    - name: Install bore
+    - name: Download cloudflared
       run: |
-        curl -L https://github.com/ekzhang/bore/releases/download/v0.4.0/bore-v0.4.0-x86_64-unknown-linux-musl.tar.gz | tar xz
-        sudo mv bore /usr/local/bin/
+        curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+        sudo dpkg -i cloudflared.deb
         
-    - name: Start tunnel
+    - name: Start Cloudflare Tunnel
+      id: tunnel
       run: |
-        bore local 6080 --to bore.pub &
-        echo "Access noVNC at: https://bore.pub:2662/vnc.html"
+        cloudflared tunnel --url http://localhost:6080 > tunnel.log 2>&1 &
+        sleep 15
+        URL=$(grep -o 'https://[^ ]*' tunnel.log | head -1)
+        echo "tunnel_url=$URL" >> $GITHUB_OUTPUT
+        
+    - name: Display connection info
+      run: |
+        echo "================================"
+        echo "VNC Connection Information"
+        echo "================================"
+        echo "URL: ${{ steps.tunnel.outputs.tunnel_url }}"
+        echo "Password: password"
+        echo "================================"
+        echo "Waiting for connection..."
         
     - name: Keep alive
       run: |
