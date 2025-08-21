@@ -1,19 +1,26 @@
-name: noVNC Server
+name: VNC Server with Websockify
 on: [workflow_dispatch]
 jobs:
-  novnc:
+  vnc:
     runs-on: ubuntu-latest
     steps:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y tightvncserver xfce4 xfce4-goodies websockify python3-numpy
+        sudo apt-get install -y tightvncserver xfce4 xfce4-goodies websockify
         
     - name: Setup VNC
       run: |
         mkdir -p ~/.vnc
         echo "password" | vncpasswd -f > ~/.vnc/passwd
         chmod 600 ~/.vnc/passwd
+        cat > ~/.vnc/xstartup << EOF
+        #!/bin/bash
+        unset SESSION_MANAGER
+        unset DBUS_SESSION_BUS_ADDRESS
+        exec startxfce4
+        EOF
+        chmod +x ~/.vnc/xstartup
         vncserver :1 -geometry 1280x720 -depth 24
         
     - name: Download noVNC
@@ -22,10 +29,9 @@ jobs:
         cd noVNC
         git checkout v1.4.0
         
-    - name: Start noVNC
+    - name: Start websockify manually
       run: |
-        cd noVNC
-        ./utils/launch.sh --vnc localhost:5901 &
+        websockify --web=noVNC 6080 localhost:5901 &
         
     - name: Install bore
       run: |
@@ -35,8 +41,8 @@ jobs:
     - name: Start tunnel
       run: |
         bore local 6080 --to bore.pub &
+        echo "Access noVNC at: https://bore.pub:2662/vnc.html"
         
     - name: Keep alive
       run: |
-        echo "Access noVNC at:"
         sleep 3600
