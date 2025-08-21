@@ -1,34 +1,55 @@
-name: Setup RDP with Cloudflare Quick Tunnel
+name: Setup Web Remote Desktop with noVNC and Cloudflare Quick Tunnel
 
 on:
   workflow_dispatch:
 
 jobs:
-  rdp-setup:
+  web-rdp-setup:
     runs-on: windows-latest
     steps:
-      - name: Enable RDP and Set Password
+      - name: Install Python (for websockify)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download and Install TigerVNC Server
         shell: powershell
         run: |
-          # RDPを有効化
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          
-          # ユーザー有効化とパスワード設定（任意のパスワードに変更）
-          net user runneradmin /active:yes
-          net user runneradmin P@ssw0rd123!  # ここを強力なパスワードに変更
-          
-          # RDPが有効か確認
-          Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections"
+          # TigerVNC最新版ダウンロード（2025年現在、1.13.1を使用。必要に応じてURL更新）
+          Invoke-WebRequest -Uri "https://github.com/TigerVNC/tigervnc/releases/download/v1.13.1/tigervnc64-1.13.1.exe" -OutFile "tigervnc.exe"
+          # サイレントインストール（/Sオプションで）
+          Start-Process -FilePath "tigervnc.exe" -ArgumentList "/S" -Wait
+          # インストールパスを環境変数に追加（デフォルト: C:\Program Files\TigerVNC）
+          $env:Path += ";C:\Program Files\TigerVNC"
+
+      - name: Set VNC Password and Start VNC Server
+        shell: powershell
+        run: |
+          # VNCパスワード設定（vncpasswd.exe使用。任意のパスワードに変更）
+          echo "P@ssw0rd123!" | vncpasswd.exe -f > "C:\Program Files\TigerVNC\passwd"
+          # VNCサーバー起動（ポート5900、デスクトップ共有）
+          winvnc.exe -run -multiuser -passwd "C:\Program Files\TigerVNC\passwd"
+          # 起動確認
+          netstat -an | find "5900"
+
+      - name: Download and Setup noVNC
+        shell: powershell
+        run: |
+          # noVNC最新版ダウンロード（git clone）
+          git clone https://github.com/novnc/noVNC.git
+          cd noVNC
+          # websockifyインストール（Python pip使用）
+          pip install -r requirements.txt  # 必要依存（numpyなど不要、基本websockify）
+          # noVNCプロキシ起動（VNC:5900をWeb:6080に変換）
+          Start-Process -FilePath "python" -ArgumentList "utils/novnc_proxy --vnc localhost:5900 --listen 6080" -NoNewWindow
 
       - name: Install cloudflared
-        uses: AnimMouse/setup-cloudflared@v1  # GitHub Marketplaceのアクションでインストール（最新版自動取得）
+        uses: AnimMouse/setup-cloudflared@v2  # Marketplaceアクションで最新版インストール
 
-      - name: Start Cloudflare Quick Tunnel for RDP
+      - name: Start Cloudflare Quick Tunnel for noVNC
         shell: powershell
         run: |
-          # Quick Tunnelを起動（アカウント不要、ランダムURL生成）
-          cloudflared tunnel --url rdp://localhost:3389
-          
-          # トンネルが起動するまで待機（URLはログに出力される）
-          Start-Sleep -Seconds 3600  # ジョブを1時間保持（必要に応じて調整、最大6時間）
+          # Quick Tunnel起動（アカウント不要、ランダムURL生成。noVNCのHTTPポート6080を公開）
+          cloudflared tunnel --url http://localhost:6080
+          # トンネルが起動するまでジョブ保持（ログにURL出力）
+          Start-Sleep -Seconds 3600  # 1時間保持（最大6時間に調整可能）
