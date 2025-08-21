@@ -1,0 +1,42 @@
+name: noVNC_Server
+on: [workflow_dispatch]
+jobs:
+  novnc:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y tightvncserver xfce4 xfce4-goodies websockify python3-numpy
+        
+    - name: Setup VNC
+      run: |
+        mkdir -p ~/.vnc
+        echo "password" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
+        vncserver :1 -geometry 1280x720 -depth 24
+        
+    - name: Download noVNC
+      run: |
+        git clone https://github.com/novnc/noVNC.git
+        cd noVNC
+        git checkout v1.4.0
+        
+    - name: Start noVNC
+      run: |
+        cd noVNC
+        ./utils/launch.sh --vnc localhost:5901 &
+        
+    - name: Install bore
+      run: |
+        curl -L https://github.com/ekzhang/bore/releases/download/v0.4.0/bore-v0.4.0-x86_64-unknown-linux-musl.tar.gz | tar xz
+        sudo mv bore /usr/local/bin/
+        
+    - name: Start tunnel
+      run: |
+        bore local 6080 --to bore.pub &
+        
+    - name: Keep alive
+      run: |
+        echo "Access noVNC at:"
+        sleep 3600
