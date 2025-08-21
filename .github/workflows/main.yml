@@ -1,13 +1,13 @@
-name: VNC Server with Cloudflare Tunnel
+name: Direct VNC with Cloudflare
 on: [workflow_dispatch]
 jobs:
   vnc:
     runs-on: ubuntu-latest
     steps:
-    - name: Install dependencies
+    - name: Install VNC server
       run: |
         sudo apt-get update
-        sudo apt-get install -y tightvncserver xfce4 xfce4-goodies websockify
+        sudo apt-get install -y tightvncserver xfce4 xfce4-goodies
         
     - name: Setup VNC
       run: |
@@ -23,33 +23,25 @@ jobs:
         chmod +x ~/.vnc/xstartup
         vncserver :1 -geometry 1280x720 -depth 24
         
-    - name: Download noVNC
+    - name: Download cloudflared binary
       run: |
-        git clone https://github.com/novnc/noVNC.git
-        cd noVNC
-        git checkout v1.4.0
+        # バイナリを直接ダウンロード
+        curl -L https://github.com/cloudflare/cloudflared/releases/download/2024.8.1/cloudflared-linux-amd64 -o cloudflared
+        # 実行権限を付与
+        chmod +x cloudflared
+        # パスが通っている場所に移動
+        sudo mv cloudflared /usr/local/bin/
+        # バージョン確認
+        cloudflared --version
         
-    - name: Start websockify
-      run: |
-        websockify --web=noVNC 6080 localhost:5901 &
-        
-    - name: Download cloudflared
-      run: |
-        # バージョンを指定してダウンロード
-        curl -L https://github.com/cloudflare/cloudflared/releases/download/2024.8.1/cloudflared-linux-amd64.deb -o cloudflared.deb
-        # ダウンロードを確認
-        ls -la cloudflared.deb
-        # インストール
-        sudo dpkg -i cloudflared.deb || sudo apt-get install -f -y
-        
-    - name: Start Cloudflare Tunnel
+    - name: Start Cloudflare Tunnel for VNC
       id: tunnel
       run: |
         # 一時ファイルにcloudflaredの出力を保存
         TEMP_FILE=$(mktemp)
         
-        # バックグラウンドでcloudflaredを実行
-        cloudflared tunnel --url http://localhost:6080 > $TEMP_FILE 2>&1 &
+        # バックグラウンドでcloudflaredを実行（TCPプロトコルでVNCポートを転送）
+        cloudflared tunnel --url tcp://localhost:5901 > $TEMP_FILE 2>&1 &
         CLOUDFLARED_PID=$!
         
         # トンネルが起動するのを待つ
@@ -87,8 +79,12 @@ jobs:
         echo "================================"
         echo "VNC Connection Information"
         echo "================================"
-        echo "URL: ${{ steps.tunnel.outputs.tunnel_url }}"
+        echo "Cloudflare Tunnel URL: ${{ steps.tunnel.outputs.tunnel_url }}"
         echo "Password: password"
+        echo ""
+        echo "For direct VNC connection:"
+        echo "Host: $(echo ${{ steps.tunnel.outputs.tunnel_url }} | sed 's|https://||')"
+        echo "Port: 443"
         echo "================================"
         echo "Tunnel log content:"
         cat tunnel.log
