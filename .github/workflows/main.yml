@@ -32,50 +32,45 @@ jobs:
     - name: Start Cloudflare Quick Tunnel (RDP)
       id: tunnel
       run: |
-        # cloudflaredを実行し、出力をファイルに保存
-        $logFile = "$env:TEMP\cloudflared.log"
-        $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url rdp://localhost:3389" -RedirectStandardOutput $logFile -NoNewWindow -PassThru
+        # 標準出力から直接URLを抽出
+        Write-Host "Starting cloudflared to get tunnel URL..."
+        $output = cmd /c "cloudflared tunnel --url rdp://localhost:3389 2>&1"
+        Write-Host "Cloudflared output:"
+        Write-Host $output
         
-        # URLが出力されるまで待機
+        # 出力からURLを抽出
         $url = $null
-        $timeout = 60 # 60秒待つ（時間を延長）
-        $elapsed = 0
-        
-        Write-Host "Waiting for tunnel URL..."
-        
-        while ($elapsed -lt $timeout -and -not $url) {
-          Start-Sleep -Seconds 2
-          $elapsed += 2
-          
-          if (Test-Path $logFile) {
-            $content = Get-Content $logFile -Raw
-            
-            # URLを抽出する正規表現を改善
-            if ($content -match 'https://[a-zA-Z0-9\-]+\.trycloudflare\.com') {
-              $url = $matches[0]
-              Write-Host "Found tunnel URL: $url"
-            }
-            
-            # デバッグ用にログファイルの内容を表示
-            if ($elapsed % 10 -eq 0) {
-              Write-Host "Checking log file ($elapsed seconds elapsed):"
-              Get-Content $logFile | Select-Object -Last 5
-            }
-          }
-        }
-        
-        if ($url) {
+        if ($output -match 'https://[a-zA-Z0-9\-]+\.trycloudflare\.com') {
+          $url = $matches[0]
           echo "tunnel_url=$url" >> $env:GITHUB_OUTPUT
-          Write-Host "Cloudflare Tunnel URL: $url"
+          Write-Host "Found tunnel URL: $url"
+          
+          # バックグラウンドでcloudflaredを実行し続ける
+          Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url rdp://localhost:3389" -NoNewWindow
+          Write-Host "Cloudflared started in background"
         } else {
           Write-Host "Failed to get tunnel URL"
-          Write-Host "Log file content:"
-          if (Test-Path $logFile) {
-            Get-Content $logFile
-          } else {
-            Write-Host "Log file not found"
-          }
           exit 1
+        }
+      shell: pwsh
+
+    - name: Verify RDP Service
+      run: |
+        # RDPサービスが実行中であることを確認
+        $service = Get-Service -Name TermService -ErrorAction SilentlyContinue
+        if ($service -and $service.Status -eq 'Running') {
+          Write-Host "RDP service is running"
+        } else {
+          Write-Host "Starting RDP service..."
+          Start-Service -Name TermService
+        }
+        
+        # RDPポートがリッスンしていることを確認
+        $tcpConnections = Get-NetTCPConnection -LocalPort 3389 -ErrorAction SilentlyContinue
+        if ($tcpConnections) {
+          Write-Host "RDP port 3389 is listening"
+        } else {
+          Write-Host "WARNING: RDP port 3389 is not listening"
         }
       shell: pwsh
 
@@ -96,3 +91,5 @@ jobs:
         echo ""
         echo "Connect using the above URL in your RDP client."
         echo "The connection will be available until this workflow times out (1 hour)."
+        echo ""
+        echo "Note: It may take a few minutes for the tunnel to be fully accessible."
