@@ -1,31 +1,43 @@
-name: Setup RDP with Cloudflare Quick Tunnel
+name: RDP with Cloudflare Quick Tunnel
 
-on: [workflow_dispatch]  # 手動トリガー（Actionsタブから実行）
+on:
+  workflow_dispatch: # 手動実行用
+  # push: # 自動実行したい場合はコメントを外す
+  #   branches:
+  #     - main
 
 jobs:
   rdp:
-    runs-on: windows-latest
+    runs-on: windows-latest # Windows Runnerを使用
+
     steps:
-      - name: Enable RDP
-        shell: powershell
-        run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          net user runneradmin StrongPassword123! /add  # パスワードを強固なものに変更
-          net localgroup administrators runneradmin /add
+    - name: Set up RDP
+      run: |
+        # RDP有効化
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        # ファイアウォールでRDPポート（3389）を許可
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        # ユーザー名とパスワードを設定（runnerユーザー）
+        # ※ パスワードはランダム生成し、ログに出力
+        $username = "runner"
+        $password = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 16 | % {[char]$_})
+        net user $username $password /add
+        net localgroup administrators $username /add
+        echo "RDP Username: $username" >> $env:GITHUB_OUTPUT
+        echo "RDP Password: $password" >> $env:GITHUB_OUTPUT
 
-      - name: Setup cloudflared
-        uses: AnimMouse/setup-cloudflared@v2
+    - name: Setup cloudflared
+      uses: AnimMouse/setup-cloudflared@v2
 
-      - name: Setup Cloudflare Quick Tunnel for RDP
-        uses: AnimMouse/setup-cloudflared/tunnel@v2
-        with:
-          url: tcp://localhost:3389  # RDPポートをTCPで公開
+    - name: Start Cloudflare Quick Tunnel (RDP)
+      run: |
+        # RDPポート（3389）をQuick Tunnelで公開
+        cloudflared tunnel --url rdp://localhost:3389
+      # バックグラウンドで実行し続けるための工夫
+      shell: pwsh
 
-      - name: Keep workflow running for connection
-        shell: powershell
-        run: Start-Sleep -Seconds 30000  # 5分間待機（接続時間を調整）
-
-      - name: Shutdown cloudflared
-        if: '!cancelled()'
-        uses: AnimMouse/setup-cloudflared/shutdown@v2
+    - name: Wait for RDP Connection
+      run: |
+        # 一定時間待機（例: 1時間）
+        Start-Sleep -Seconds 3600
+      shell: pwsh
