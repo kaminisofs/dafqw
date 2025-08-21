@@ -34,28 +34,47 @@ jobs:
       run: |
         # cloudflaredを実行し、出力をファイルに保存
         $logFile = "$env:TEMP\cloudflared.log"
-        Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url rdp://localhost:3389" -RedirectStandardOutput $logFile -NoNewWindow
+        $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url rdp://localhost:3389" -RedirectStandardOutput $logFile -NoNewWindow -PassThru
         
         # URLが出力されるまで待機
         $url = $null
-        $timeout = 30 # 30秒待つ
+        $timeout = 60 # 60秒待つ（時間を延長）
         $elapsed = 0
+        
+        Write-Host "Waiting for tunnel URL..."
+        
         while ($elapsed -lt $timeout -and -not $url) {
-          Start-Sleep -Seconds 1
-          $elapsed++
+          Start-Sleep -Seconds 2
+          $elapsed += 2
+          
           if (Test-Path $logFile) {
             $content = Get-Content $logFile -Raw
+            
+            # URLを抽出する正規表現を改善
             if ($content -match 'https://[a-zA-Z0-9\-]+\.trycloudflare\.com') {
               $url = $matches[0]
+              Write-Host "Found tunnel URL: $url"
+            }
+            
+            # デバッグ用にログファイルの内容を表示
+            if ($elapsed % 10 -eq 0) {
+              Write-Host "Checking log file ($elapsed seconds elapsed):"
+              Get-Content $logFile | Select-Object -Last 5
             }
           }
         }
         
         if ($url) {
           echo "tunnel_url=$url" >> $env:GITHUB_OUTPUT
-          echo "Cloudflare Tunnel URL: $url"
+          Write-Host "Cloudflare Tunnel URL: $url"
         } else {
-          echo "Failed to get tunnel URL"
+          Write-Host "Failed to get tunnel URL"
+          Write-Host "Log file content:"
+          if (Test-Path $logFile) {
+            Get-Content $logFile
+          } else {
+            Write-Host "Log file not found"
+          }
           exit 1
         }
       shell: pwsh
@@ -63,6 +82,7 @@ jobs:
     - name: Wait for RDP Connection
       run: |
         # 1時間待機（必要に応じて調整）
+        Write-Host "Waiting for RDP connections for 1 hour..."
         Start-Sleep -Seconds 3600
       shell: pwsh
 
